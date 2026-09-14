@@ -1,49 +1,23 @@
 <#
-.Synopsis
+.SYNOPSIS
 Manages the current inventory
-.Description
-User edits two csv files by adding equipment to the active inventory, removing equipment from the
-active inventory, and transfer previously loaned equpment of left employees for record
-.Parameter ActiveInventoryFile
-A csv file from the current directory representing the active inventory
-.Parameter LeftCompanyFile
-A csv file from the current directory representing employees who left and their old equipment
-.Example
-.\Edit-Inventory.ps1 active_inventory.csv left_company.csv
+.DESCRIPTION
+User must have the excel workbook closed before running this script. User can make edits to the
+inventory by adding equipment, removing equipment, and record equipment from left employees
+.EXAMPLE
+.\Edit-Inventory.ps1
 #>
 
-#requires -version 7.0
+#Requires -Version 7.0
+#Requires -Modules ImportExcel
 
-param(
-    [Parameter(
-        Mandatory,
-        Position = 0,
-        HelpMessage = "A csv file from the current directory representing the active inventory"
-    )]
-    [string]$ActiveInventoryFile,
-
-    [Parameter(
-        Mandatory,
-        Position = 1,
-        HelpMessage = ("A csv file from the current directory representing employees who left " +
-            "and their old equipment")
-    )]
-    [string]$LeftCompanyFile
-)
-
-try {
-    [void](Import-Csv -Path "$(Get-Location)\$ActiveInventoryFile" -ErrorAction Stop)
-} catch {
-    throw "Failed to find active inventory file in the current directory.`n$($_.Exception.Message)"
-}
-
-try {
-    [void](Import-Csv -Path "$(Get-Location)\$LeftCompanyFile" -ErrorAction Stop)
-} catch {
-    throw "Failed to find left company file in the current directory.`n$($_.Exception.Message)"
-}
+$workbookPath = "C:\Users\estebamx\pshell\csv_parser\testbook.xlsx"
 
 function Add-Equipment {
+<#
+.SYNOPSIS
+Adds a new device to active inventory
+#>
     param(
         [string]$User,
         [string]$Model,
@@ -53,12 +27,12 @@ function Add-Equipment {
         [string]$Swarmhost,
         [string]$Notes,
         [PSCustomObject]$NewDevice,
-        [string]$File = $ActiveInventoryFile
+        [string]$WorksheetName = "Active Inventory"
     )
     if (-not $NewDevice) {    
         $NewDevice = [PSCustomObject]@{
             "User" = $User
-            "Updated" = (Get-Date).toShortDateString()
+            "Updated" = Get-Date
             "Desktop/Laptop Model" = $Model
             "Service Tag" = $ServiceTag.ToUpper()
             "SL Asset Tag" = $SLAssetTag
@@ -67,45 +41,104 @@ function Add-Equipment {
             "Notes" = $Notes
         }
     }
-    (Import-Csv -Path "$(Get-Location)\$File") + $NewDevice |
-    Sort-Object -Property "User" |
-    Export-Csv -Path "$(Get-Location)\$File" -NoTypeInformation
+    $xlpkg = Open-ExcelPackage -Path $workbookPath
+    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName $WorksheetName
+    $exportExcelSplat = @{
+        ExcelPackage = $xlpkg
+        WorksheetName = $WorksheetName
+        TableStyle = "Light14"
+        ClearSheet = $true
+        AutoSize = $true
+        PassThru = $true
+    }
+    $newXlpkg = $data + $NewDevice | Sort-Object -Property "User" | Export-Excel @exportExcelSplat
+    $setExcelColumnSplat = @{
+        ExcelPackage = $newXlpkg
+        WorksheetName = $WorksheetName
+        Column = 2
+        NumberFormat = "Short Date"
+    }
+    Set-ExcelColumn @setExcelColumnSplat
+    Close-ExcelPackage -ExcelPackage $newXlpkg
     Write-Host "  Equipment added to $File file!"
 }
 
 function Remove-Inventory {
+<#
+.SYNOPSIS
+Removes a device from active inventory
+#>
     param(
         [string]$ServiceTag
     )
-    $activeInventory = (Import-Csv -Path "$(Get-Location)\$ActiveInventoryFile")
-    if ($activeInventory."Service Tag" -notcontains $ServiceTag) {
+    $xlpkg = Open-ExcelPackage -Path $workbookPath
+    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName "Active Inventory"
+    if ($data."Service Tag" -notcontains $ServiceTag) {
+        Close-ExcelPackage -ExcelPackage $xlpkg -NoSave
         Write-Warning "  Could not locate equipment with the service tag: $($ServiceTag.ToUpper())"
         return
     }
-    $activeInventory | Where-Object { $_."Service Tag" -ne $ServiceTag } |
-    Export-Csv -Path "$(Get-Location)\$ActiveInventoryFile" -NoTypeInformation
+    $exportExcelSplat = @{
+        ExcelPackage = $xlpkg
+        WorksheetName = "Active Inventory"
+        TableStyle = "Light14"
+        ClearSheet = $true
+        AutoSize = $true
+        PassThru = $true
+    }
+    $newXlpkg = $data | Where-Object { $_."Service Tag" -ne $ServiceTag } |
+    Export-Excel @exportExcelSplat
+    $setExcelColumnSplat = @{
+        ExcelPackage = $newXlpkg
+        WorksheetName = "Active Inventory"
+        Column = 2
+        NumberFormat = "Short Date"
+    }
+    Set-ExcelColumn @setExcelColumnSplat
+    Close-ExcelPackage -ExcelPackage $newXlpkg
     Write-Host "  Equipment removed!"
 }
 
 function Move-Employee {
+<#
+.SYNOPSIS
+Moves employee equipment from active inventory to left company 
+#>
     param(
         [string]$User
     )
-    $activeInventory = (Import-Csv -Path "$(Get-Location)\$ActiveInventoryFile")
-    if ($activeInventory."User" -notcontains $User) {
+    $xlpkg = Open-ExcelPackage -Path $workbookPath
+    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName "Active Inventory"
+    if ($data."User" -notcontains $User) {
+        Close-ExcelPackage -ExcelPackage $xlpkg -NoSave
         Write-Warning "  Could not find user: $User"
         return
     }
-    $userEquipment = $activeInventory | Where-Object { $_."User" -eq $User }
-    $activeInventory | Where-Object { $_."User" -ne $User } |
-    Export-Csv -Path "$(Get-Location)\$ActiveInventoryFile" -NoTypeInformation
+    $userEquipment = $data | Where-Object { $_."User" -eq $User }
+    $exportExcelSplat = @{
+        ExcelPackage = $xlpkg
+        WorksheetName = "Active Inventory"
+        TableStyle = "Light14"
+        ClearSheet = $true
+        AutoSize = $true
+        PassThru = $true
+    }
+    $newXlpkg = $data | Where-Object { $_."User" -ne $User } | Export-Excel @exportExcelSplat
+    $setExcelColumnSplat = @{
+        ExcelPackage = $newXlpkg
+        WorksheetName = "Active Inventory"
+        Column = 2
+        NumberFormat = "Short Date"
+    }
+    Set-ExcelColumn @setExcelColumnSplat
+    Close-ExcelPackage -ExcelPackage $newXlpkg
     foreach ($device in $userEquipment) {
-        device."Updated" = (Get-Date).toShortDateString()
-        Add-Equipment -NewDevice $device -File $LeftCompanyFile
+        Add-Equipment -NewDevice $device -WorksheetName "Left Company"
     }
     Write-Host "  User moved."
 }
 
+# main logic
 Write-Host "Hello, this is a powershell script that can help you with your current inventory."
 $response = Read-Host ("Would you like to (1) add, (2) remove, or (3) transfer employee equipment? " +
     "To end script type (N). (1/2/3/N)")
