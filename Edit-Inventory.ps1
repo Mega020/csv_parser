@@ -11,7 +11,10 @@ inventory by adding equipment, removing equipment, and record equipment from lef
 #Requires -Version 7.0
 #Requires -Modules ImportExcel
 
+# change these values accordingly
 $workbookPath = "C:\Users\estebamx\pshell\csv_parser\testbook.xlsx"
+$actInvWrksht = "Active Inventory"
+$lftCompWrksht = "Left Company"
 
 function Add-Equipment {
 <#
@@ -27,7 +30,7 @@ Adds a new device to active inventory
         [string]$Swarmhost,
         [string]$Notes,
         [PSCustomObject]$NewDevice,
-        [string]$WorksheetName = "Active Inventory"
+        [string]$WorksheetName = $actInvWrksht
     )
     if (-not $NewDevice) {    
         $NewDevice = [PSCustomObject]@{
@@ -52,13 +55,16 @@ Adds a new device to active inventory
         PassThru = $true
     }
     $newXlpkg = $data + $NewDevice | Sort-Object -Property "User" | Export-Excel @exportExcelSplat
-    $setExcelColumnSplat = @{
-        ExcelPackage = $newXlpkg
-        WorksheetName = $WorksheetName
-        Column = 2
-        NumberFormat = "Short Date"
+    $columns = if ($null -ne $NewDevice."Created") { 2..3 } else { 2 }
+    foreach ($col in $columns) {
+        $setExcelColumnSplat = @{
+            ExcelPackage  = $newXlpkg
+            WorksheetName = $WorksheetName
+            Column        = $col
+            NumberFormat  = "Short Date"
+        }
+        Set-ExcelColumn @setExcelColumnSplat
     }
-    Set-ExcelColumn @setExcelColumnSplat
     Close-ExcelPackage -ExcelPackage $newXlpkg
     Write-Host "  Equipment added to $File file!"
 }
@@ -72,7 +78,7 @@ Removes a device from active inventory
         [string]$ServiceTag
     )
     $xlpkg = Open-ExcelPackage -Path $workbookPath
-    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName "Active Inventory"
+    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName $actInvWrksht
     if ($data."Service Tag" -notcontains $ServiceTag) {
         Close-ExcelPackage -ExcelPackage $xlpkg -NoSave
         Write-Warning "  Could not locate equipment with the service tag: $($ServiceTag.ToUpper())"
@@ -80,7 +86,7 @@ Removes a device from active inventory
     }
     $exportExcelSplat = @{
         ExcelPackage = $xlpkg
-        WorksheetName = "Active Inventory"
+        WorksheetName = $actInvWrksht
         TableStyle = "Light14"
         ClearSheet = $true
         AutoSize = $true
@@ -90,7 +96,7 @@ Removes a device from active inventory
     Export-Excel @exportExcelSplat
     $setExcelColumnSplat = @{
         ExcelPackage = $newXlpkg
-        WorksheetName = "Active Inventory"
+        WorksheetName = $actInvWrksht
         Column = 2
         NumberFormat = "Short Date"
     }
@@ -108,7 +114,7 @@ Moves employee equipment from active inventory to left company
         [string]$User
     )
     $xlpkg = Open-ExcelPackage -Path $workbookPath
-    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName "Active Inventory"
+    $data = Import-Excel -ExcelPackage $xlpkg -WorksheetName $actInvWrksht
     if ($data."User" -notcontains $User) {
         Close-ExcelPackage -ExcelPackage $xlpkg -NoSave
         Write-Warning "  Could not find user: $User"
@@ -117,7 +123,7 @@ Moves employee equipment from active inventory to left company
     $userEquipment = $data | Where-Object { $_."User" -eq $User }
     $exportExcelSplat = @{
         ExcelPackage = $xlpkg
-        WorksheetName = "Active Inventory"
+        WorksheetName = $actInvWrksht
         TableStyle = "Light14"
         ClearSheet = $true
         AutoSize = $true
@@ -126,14 +132,16 @@ Moves employee equipment from active inventory to left company
     $newXlpkg = $data | Where-Object { $_."User" -ne $User } | Export-Excel @exportExcelSplat
     $setExcelColumnSplat = @{
         ExcelPackage = $newXlpkg
-        WorksheetName = "Active Inventory"
+        WorksheetName = $actInvWrksht
         Column = 2
         NumberFormat = "Short Date"
     }
     Set-ExcelColumn @setExcelColumnSplat
     Close-ExcelPackage -ExcelPackage $newXlpkg
     foreach ($device in $userEquipment) {
-        Add-Equipment -NewDevice $device -WorksheetName "Left Company"
+        $device | Add-Member -NotePropertyName "Created" -NotePropertyValue $device."Updated"
+        $device."Updated" = Get-Date
+        Add-Equipment -NewDevice $device -WorksheetName $lftCompWrksht
     }
     Write-Host "  User moved."
 }
